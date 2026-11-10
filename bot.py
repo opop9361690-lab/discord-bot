@@ -1,16 +1,32 @@
 import os
+import threading
+from flask import Flask
 import discord
 from discord.ext import commands
 from discord.ui import Modal, TextInput, View, Button
 
-# ================= [내 서버 정보 입력] =================
-TOKEN = os.environ.get("DISCORD_TOKEN")
-GUILD_ID = 1462029945034375181            # 내 서버 ID (우클릭 복사)
-REQUEST_CHANNEL_ID = 1567519631994781717  # #디코사용요청 채널 ID
-LOG_CHANNEL_ID = 1569681824660328520      # #진영닉넴답변-로그 채널 ID
+# ================= [Render 웹 포트 열기 (24시간 유지용)] =================
+app = Flask('')
 
-ROLE_ADD_ID = 1462037847757295789         # 부여할 역할 (시청자) ID
-ROLE_REMOVE_ID = 1565700634009665726      # 회수할 역할 (권한대기) ID (없으면 0)
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+threading.Thread(target=run_web, daemon=True).start()
+# =========================================================================
+
+# ================= [내 서버 정보 설정] =================
+TOKEN = os.environ.get("DISCORD_TOKEN")
+GUILD_ID = 1462029945034375181            # 내 서버 ID[cite: 9]
+REQUEST_CHANNEL_ID = 1567519631994781717  # #디코사용요청 채널 ID[cite: 9]
+LOG_CHANNEL_ID = 1569681824660328520      # #진영닉넴답변-로그 채널 ID[cite: 9]
+
+ROLE_ADD_ID = 1462037847757295789         # 부여할 역할 (시청자) ID[cite: 9]
+ROLE_REMOVE_ID = 1565700634009665726      # 회수할 역할 (권한대기) ID[cite: 9]
 # =======================================================
 
 class VerifyModal(Modal, title="등업 신청서"):
@@ -29,25 +45,28 @@ class VerifyModal(Modal, title="등업 신청서"):
         required=True
     )
 
-async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
         member = interaction.user
         
-        # 1. 역할 부여 및 회수
+        # 1. 역할 부여 및 회수 처리 (디스코드 권한 계층 오류 방지)
         add_role = guild.get_role(ROLE_ADD_ID)
         remove_role = guild.get_role(ROLE_REMOVE_ID) if ROLE_REMOVE_ID else None
         
-        if add_role:
-            await member.add_roles(add_role)
-        if remove_role:
-            await member.remove_roles(remove_role)
-            
+        try:
+            if add_role:
+                await member.add_roles(add_role)
+            if remove_role and remove_role in member.roles:
+                await member.remove_roles(remove_role)
+        except discord.Forbidden:
+            print("경고: 봇의 역할 순서가 시청자/권한대기 역할보다 낮아 역할을 부여하지 못했습니다.")
+
         chosen_faction = self.faction.value.strip()
         char_name = self.character_name.value.strip()
             
-        # 2. 유저 본인에게만 뜨는 완료 팝업 (개인 채널 생성 없음)
+        # 2. 유저 본인에게만 뜨는 완료 메시지 (개인 채널 생성 없음)
         await interaction.response.send_message(
-            f"✅ **등업이 완료되었습니다!**\n• 진영: {chosen_faction}\n• 캐릭터명: {char_name}", 
+            f"✅ **등업 신청이 완료되었습니다!**\n• 진영: {chosen_faction}\n• 캐릭터명: {char_name}", 
             ephemeral=True
         )
         
@@ -94,7 +113,7 @@ async def on_ready():
         if not has_panel:
             embed = discord.Embed(
                 title="디스코드 등업 안내",
-                description="아래 버튼을 눌러 **진영**과 **인게임 캐릭터명**을 입력해 주세요.\n제출 즉시 등업이 완료됩니다.",
+                description="아래 버튼을 눌러 **진영**과 **인게임 캐릭터명**을 입력해 주세요.\n제출 즉시 등업 처리가 진행됩니다.",
                 color=discord.Color.blue()
             )
             await channel.send(embed=embed, view=VerifyView())

@@ -29,11 +29,11 @@ class VerifyModal(Modal, title="등업 신청서"):
         required=True
     )
 
-    async def on_submit(self, interaction: discord.Interaction):
+async def on_submit(self, interaction: discord.Interaction):
         guild = interaction.guild
         member = interaction.user
         
-        # 1. 역할 처리
+        # 1. 역할 부여 및 회수
         add_role = guild.get_role(ROLE_ADD_ID)
         remove_role = guild.get_role(ROLE_REMOVE_ID) if ROLE_REMOVE_ID else None
         
@@ -44,21 +44,14 @@ class VerifyModal(Modal, title="등업 신청서"):
             
         chosen_faction = self.faction.value.strip()
         char_name = self.character_name.value.strip()
-        new_nick = f"[{chosen_faction}] {char_name}"[:32]
-        
-        # 2. 서버 닉네임 자동 변경
-        try:
-            await member.edit(nick=new_nick)
-        except discord.Forbidden:
-            pass
             
-        # 3. 유저 본인에게만 뜨는 완료 팝업 (개인 채널 생성 없음)
+        # 2. 유저 본인에게만 뜨는 완료 팝업 (개인 채널 생성 없음)
         await interaction.response.send_message(
             f"✅ **등업이 완료되었습니다!**\n• 진영: {chosen_faction}\n• 캐릭터명: {char_name}", 
             ephemeral=True
         )
         
-        # 4. 관리자 로그 채널로 답변 내용 전송
+        # 3. 관리자 로그 채널로 답변 내용 전송
         log_channel = guild.get_channel(LOG_CHANNEL_ID)
         if log_channel:
             embed = discord.Embed(
@@ -70,7 +63,6 @@ class VerifyModal(Modal, title="등업 신청서"):
             embed.add_field(name="신청자 계정", value=f"{member.mention} ({member.name})", inline=False)
             embed.add_field(name="진영", value=chosen_faction, inline=True)
             embed.add_field(name="캐릭터명", value=char_name, inline=True)
-            embed.add_field(name="설정된 닉네임", value=new_nick, inline=False)
             await log_channel.send(embed=embed)
 
 class VerifyView(View):

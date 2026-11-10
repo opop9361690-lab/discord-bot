@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord.ui import Modal, TextInput, View, Button
 
 # ================= [내 서버 정보 입력] =================
-TOKEN = "디스코드_개발자포털에서_복사한_봇토큰"
+TOKEN = "MTU2OTcwMTgwNTA2NjE2NjM3Mw.GqWtUu.jw8cH-HotFKb95uNsy3iigXiiUG6qjKcS_jQMk"
 GUILD_ID = 1462029945034375181            # 내 서버 ID (우클릭 복사)
 REQUEST_CHANNEL_ID = 1567519631994781717  # #디코사용요청 채널 ID
 LOG_CHANNEL_ID = 1569681824660328520      # #진영닉넴답변-로그 채널 ID

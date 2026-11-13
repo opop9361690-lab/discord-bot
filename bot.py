@@ -117,6 +117,9 @@ async def on_ready():
                 color=discord.Color.blue()
             )
             await channel.send(embed=embed, view=VerifyView())
+    # (기존에 들어있던 코드들 유지)
+    bot.add_view(StreamerAuthView())  # 추가 1
+    await bot.tree.sync()             # 추가 2
             
 import random
 import string

@@ -117,5 +117,162 @@ async def on_ready():
                 color=discord.Color.blue()
             )
             await channel.send(embed=embed, view=VerifyView())
+import random
+import string
+import time
+import discord
+from discord import app_commands
+from discord.ext import commands
 
+# ==========================================
+# [설정 구역] 서버 환경에 맞게 ID 숫자만 수정하세요
+# ==========================================
+STREAMER_ROLE_ID = 123456789012345678  # 부여할 '스트리머' 역할 ID
+LOG_CHANNEL_ID = 123456789012345678    # 인증 성공/실패 알림을 받을 관리자 로그 채널 ID
+# ==========================================
+
+# 12자리 대소문자 + 숫자 + 특수문자 랜덤 생성 함수
+def generate_strong_code(length=12):
+    chars = string.ascii_letters + string.digits + "!@#$%^&*"
+    while True:
+        code = ''.join(random.choice(chars) for _ in range(length))
+        if (any(c.islower() for c in code) and
+            any(c.isupper() for c in code) and
+            any(c.isdigit() for c in code) and
+            any(c in "!@#$%^&*" for c in code)):
+            return code
+
+CURRENT_STREAMER_CODE = generate_strong_code(12)
+FAILED_ATTEMPTS = {}
+
+# 1. 코드 입력 팝업창 (Modal)
+class StreamerAuthModal(discord.ui.Modal, title="스트리머 전용 권한 인증"):
+    code_input = discord.ui.TextInput(
+        label="전달받은 12자리 인증 코드를 입력하세요",
+        placeholder="대·소문자 및 특수문자를 정확히 구분하여 입력",
+        min_length=4,
+        max_length=32,
+        required=True
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        now = time.time()
+
+        # 10분 쿨타임 체크
+        if user_id in FAILED_ATTEMPTS:
+            count, lock_until = FAILED_ATTEMPTS[user_id]
+            if now < lock_until:
+                remain = int((lock_until - now) // 60) + 1
+                await interaction.response.send_message(
+                    f"⛔ 입력 횟수 초과로 일시 차단되었습니다. **{remain}분 후** 다시 시도해 주세요.",
+                    ephemeral=True
+                )
+                return
+            elif lock_until != 0 and now >= lock_until:
+                FAILED_ATTEMPTS[user_id] = [0, 0]
+
+        entered = self.code_input.value.strip()
+        log_channel = interaction.guild.get_channel(LOG_CHANNEL_ID)
+
+        if entered == CURRENT_STREAMER_CODE:
+            role = interaction.guild.get_role(STREAMER_ROLE_ID)
+            if not role:
+                await interaction.response.send_message("⚠️ 스트리머 역할을 찾을 수 없습니다. 관리자에게 문의하세요.", ephemeral=True)
+                return
+
+            if role in interaction.user.roles:
+                await interaction.response.send_message("✅ 이미 스트리머 역할을 보유하고 계십니다.", ephemeral=True)
+                return
+
+            await interaction.user.add_roles(role, reason="스트리머 인증 코드 일치")
+            FAILED_ATTEMPTS.pop(user_id, None)
+
+            await interaction.response.send_message(
+                "🎉 **인증이 완료되었습니다!** `스트리머` 역할이 부여되어 전용 음성채널 입장이 가능합니다.",
+                ephemeral=True
+            )
+
+            if log_channel:
+                embed = discord.Embed(
+                    title="🎙️ 스트리머 권한 인증 완료",
+                    description=f"**대상:** {interaction.user.mention} (`{interaction.user.id}`)\n**결과:** `스트리머` 역할 자동 부여 완료",
+                    color=discord.Color.green()
+                )
+                await log_channel.send(embed=embed)
+
+        else:
+            count, _ = FAILED_ATTEMPTS.get(user_id, [0, 0])
+            count += 1
+            if count >= 3:
+                FAILED_ATTEMPTS[user_id] = [count, now + 600]
+                await interaction.response.send_message(
+                    "❌ 인증 코드가 3회 연속 일치하지 않아 **10분간 입력이 차단**됩니다.",
+                    ephemeral=True
+                )
+                if log_channel:
+                    embed = discord.Embed(
+                        title="🚨 스트리머 인증 시도 차단 알림",
+                        description=f"**대상:** {interaction.user.mention} (`{interaction.user.id}`)\n**사유:** 잘못된 코드 3회 연속 입력 (10분 차단)",
+                        color=discord.Color.red()
+                    )
+                    await log_channel.send(embed=embed)
+            else:
+                FAILED_ATTEMPTS[user_id] = [count, 0]
+                await interaction.response.send_message(
+                    f"❌ 인증 코드가 올바르지 않습니다. (남은 기회: **{3 - count}회**)",
+                    ephemeral=True
+                )
+
+# 2. 채널에 띄워둘 영구 인증 버튼
+class StreamerAuthView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="스트리머 권한 인증",
+        style=discord.ButtonStyle.primary,
+        emoji="🎙️",
+        custom_id="persistent_streamer_auth_btn"
+    )
+    async def auth_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(StreamerAuthModal())
+
+# 3. 관리자 전용 명령어 모음
+# (1) 인증 버튼 패널 설치 명령어
+@bot.tree.command(name="스트리머패널설치", description="[관리자] 현재 채널에 스트리머 인증 버튼을 생성합니다.")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_streamer_panel(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🎙️ 스트리머 전용 권한 인증",
+        description=(
+            "운영진으로부터 전달받은 **12자리 고유 인증 코드**가 있는 스트리머분들은\n"
+            "아래 버튼을 눌러 코드를 입력하시면 즉시 전용 권한 및 음성채널 입장이 활성화됩니다."
+        ),
+        color=discord.Color.purple()
+    )
+    await interaction.channel.send(embed=embed, view=StreamerAuthView())
+    await interaction.response.send_message("✅ 스트리머 인증 패널이 설치되었습니다.", ephemeral=True)
+
+# (2) 코드 발급 및 복사 버튼 출력 명령어 (/스트리머인증코드)
+@bot.tree.command(name="스트리머인증코드", description="[관리자] 새 12자리 스트리머 인증 코드를 발급합니다. (복사 버튼 제공)")
+@app_commands.describe(직접입력="원하는 코드가 있을 때만 입력 (비워두면 12자리 랜덤 코드가 자동 생성됩니다)")
+@app_commands.checks.has_permissions(administrator=True)
+async def manage_streamer_code(interaction: discord.Interaction, 직접입력: str = None):
+    global CURRENT_STREAMER_CODE
+    if 직접입력:
+        CURRENT_STREAMER_CODE = 직접입력.strip()
+        status_text = "입력하신 코드로 변경되었습니다."
+    else:
+        CURRENT_STREAMER_CODE = generate_strong_code(12)
+        status_text = "새로운 **12자리 랜덤 코드**가 발급되었습니다. (이전 코드는 즉시 폐기됨)"
+
+    # 여러 줄 코드 블록(```)을 사용하면 디스코드 우측 상단에 원클릭 복사 아이콘이 자동 생성됩니다.
+    msg = (
+        f"🔄 {status_text}\n"
+        f"아래 박스 우측 상단의 **복사 아이콘**을 눌러 스트리머에게 전달하세요:\n"
+        f"```\n{CURRENT_STREAMER_CODE}\n```"
+    )
+
+    await interaction.response.send_message(msg, ephemeral=True)
 bot.run(TOKEN)

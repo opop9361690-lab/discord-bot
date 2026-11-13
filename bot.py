@@ -117,6 +117,7 @@ async def on_ready():
                 color=discord.Color.blue()
             )
             await channel.send(embed=embed, view=VerifyView())
+            
 import random
 import string
 import time
@@ -275,4 +276,5 @@ async def manage_streamer_code(interaction: discord.Interaction, 직접입력: s
     )
 
     await interaction.response.send_message(msg, ephemeral=True)
+    
 bot.run(TOKEN)

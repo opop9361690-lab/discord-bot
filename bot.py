@@ -281,4 +281,6 @@ async def on_ready():
             )
             await channel.send(embed=embed, view=VerifyView())
 
+from youtube_alerts import install as install_youtube_alerts
+install_youtube_alerts(bot)
 bot.run(TOKEN)

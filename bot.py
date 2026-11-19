@@ -222,7 +222,10 @@ class MyBot(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
-        # 재부팅 후에도 두 버튼이 모두 영구 작동하도록 등록
+        from guild_applications import install as install_guild_applications
+        install_guild_applications(self, GUILD_ID, LOG_CHANNEL_ID, STREAMER_ROLE_ID)
+
+        # 기존 등업 및 스트리머 인증 버튼 등록
         self.add_view(VerifyView())
         self.add_view(StreamerAuthView())
         

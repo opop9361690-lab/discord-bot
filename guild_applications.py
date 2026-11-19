@@ -11,6 +11,9 @@ CHANNEL_ID = 1572975822489526343  # 겜코 와우포에버 / ┆길드가입신�
 APPLY = 'wowguild:apply:v1'
 DETAILS = 'wowguild:details:v1'
 COOLDOWN = timedelta(minutes=15)
+PANEL = ('**와우 길드 가입 신청**\n버튼을 누르면 이 채널에 신청이 새 메시지로 남습니다. '
+         '스트리머에게 별도 알림은 보내지 않습니다.\n'
+         '스트리머가 등업 때 입력한 진영과 캐릭터명을 확인한 뒤 게임 안에서 초대합니다.')
 logger = logging.getLogger(__name__)
 
 
@@ -88,10 +91,10 @@ class GuildApplications:
             try:
                 async for msg in channel.history(limit=None, oldest_first=True):
                     if msg.author.id == self.bot.user.id and has_button(msg, APPLY):
+                        if msg.content != PANEL:
+                            await msg.edit(content=PANEL, allowed_mentions=discord.AllowedMentions.none())
                         return
-                await channel.send('**와우 길드 가입 신청**\n아래 버튼을 한 번 누르면 스트리머에게 알림이 갑니다. '
-                                   '진영과 캐릭터명은 등업 때 입력한 정보를 사용합니다.\n'
-                                   '스트리머가 확인한 뒤 게임 안에서 직접 길드 초대를 보내드립니다.',
+                await channel.send(PANEL, silent=True,
                                    view=ApplyView(self), allowed_mentions=discord.AllowedMentions.none())
             except discord.HTTPException:
                 logger.exception('길드가입신청 패널 확인/설치 실패')
@@ -109,20 +112,19 @@ class GuildApplications:
             perms = it.channel.permissions_for(it.guild.me)
             if not (perms.view_channel and perms.send_messages and perms.embed_links and perms.read_message_history):
                 result = '봇의 신청 채널 권한이 부족해 접수하지 않았습니다. 운영진에게 알려 주세요.'
-            elif not role or not (role.mentionable or perms.mention_everyone):
-                result = '스트리머 역할에 알림을 보낼 수 없어 접수하지 않았습니다. 운영진에게 알려 주세요.'
+            elif not role:
+                result = '초대 정보를 확인할 스트리머 역할이 없어 접수하지 않았습니다. 운영진에게 알려 주세요.'
             else:
                 cutoff = discord.utils.utcnow() - COOLDOWN
                 async for msg in it.channel.history(limit=None, after=cutoff):
                     if applicant(msg, self.bot.user.id) == member_id:
-                        result = '이미 신청이 접수됐습니다. 15분 동안은 중복 알림을 보내지 않습니다.'
+                        result = '이미 신청이 접수됐습니다. 15분 동안은 중복 신청을 받지 않습니다.'
                         break
                 else:
                     notice = discord.Embed(title='길드 초대 요청', description=f'신청자: <@{member_id}>')
-                    await it.channel.send(content=f'{role.mention} 게임 내 길드 초대를 부탁드립니다.',
+                    await it.channel.send(content='새 길드 가입 신청이 있습니다.', silent=True,
                                           embed=notice, view=DetailsView(self),
-                                          allowed_mentions=discord.AllowedMentions(everyone=False, users=False,
-                                                                                  roles=[role], replied_user=False))
+                                          allowed_mentions=discord.AllowedMentions.none())
                     result = '길드 가입 신청을 접수했습니다. 스트리머가 확인한 뒤 게임 안에서 초대합니다.'
         except discord.HTTPException:
             logger.exception('길드 초대 요청 처리 실패')

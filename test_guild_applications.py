@@ -21,7 +21,7 @@ def record(user_id, name='테스트법사', bot_id=1):
 
 
 def msg(button, uid=55):
-    return N(components=[N(children=[N(custom_id=button)])], author=N(id=1),
+    return N(content=g.PANEL, components=[N(children=[N(custom_id=button)])], author=N(id=1),
              embeds=[discord.Embed(description=f'신청자: <@{uid}>')])
 
 
@@ -41,10 +41,12 @@ class Flow(unittest.IsolatedAsyncioTestCase):
                     user=N(id=55, roles=[]), response=AsyncMock(), edit_original_response=AsyncMock(),
                     message=msg(g.DETAILS))
 
-    async def test_send_only_role_mention_no_character_data(self):
+    async def test_new_public_message_silent_no_mentions_no_character_data(self):
         await self.feature.apply(self.it)
         opts = self.channel.send.await_args.kwargs
-        self.assertEqual(opts['allowed_mentions'].to_dict(), {'roles':[7], 'parse':[]})
+        self.assertEqual(opts['allowed_mentions'].to_dict(), {'parse':[]})
+        self.assertTrue(opts['silent'])
+        self.assertNotIn('@', opts['content'])
         self.assertEqual(opts['embed'].description, '신청자: <@55>')
         self.assertTrue(opts['view'].is_persistent())
         self.it.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
@@ -58,7 +60,7 @@ class Flow(unittest.IsolatedAsyncioTestCase):
     async def test_no_ping_permission(self):
         self.role.mentionable = False
         await self.feature.apply(self.it)
-        self.channel.send.assert_not_awaited()
+        self.channel.send.assert_awaited_once()
 
     async def test_other_member_not_blocked(self):
         self.channel.history = history(msg(g.DETAILS, 555))
@@ -92,6 +94,15 @@ class Flow(unittest.IsolatedAsyncioTestCase):
         self.logs.history = history()
         await self.feature.details(self.it)
         self.assertIn('개별 확인', self.it.edit_original_response.await_args.kwargs['content'])
+
+    async def test_existing_panel_migrates_in_place(self):
+        old = msg(g.APPLY)
+        old.content, old.edit = '이전 안내', AsyncMock()
+        self.channel.history = history(old)
+        await self.feature.ensure_panel()
+        old.edit.assert_awaited_once()
+        self.assertEqual(old.edit.await_args.kwargs['content'], g.PANEL)
+        self.channel.send.assert_not_awaited()
 
     async def test_reconnect_no_duplicate_panel(self):
         await self.feature.ensure_panel()

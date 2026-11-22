@@ -62,10 +62,10 @@ class VerifyModal(Modal, title="등업 신청서"):
         required=True
     )
     character_name = TextInput(
-        label="인게임 캐릭터명을 입력해주세요",
-        placeholder="정확한 캐릭터명 입력",
+        label="캐릭터 전체 이름 (주 이름 + 보조 이름)",
+        placeholder="주 이름과 보조 이름을 띄어 써 주세요. 예: Asha Brightvale",
         min_length=2,
-        max_length=12,
+        max_length=64,
         required=True
     )
 

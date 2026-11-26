@@ -5,6 +5,9 @@ import re
 from datetime import timedelta
 
 import discord
+from discord import app_commands
+
+from forever_character import EquipmentView, ForeverAPI, LookupProblem, registered, summary
 
 
 CHANNEL_ID = 1572975822489526343  # 겜코 와우포에버 / ┆길드가입신청
@@ -72,6 +75,7 @@ class GuildApplications:
     def __init__(self, bot, guild_id, log_id, role_id):
         self.bot, self.guild_id = bot, guild_id
         self.log_id, self.role_id = log_id, role_id
+        self.api = ForeverAPI()
         self.in_flight = set()
         self.panel_lock = asyncio.Lock()
 
@@ -133,28 +137,56 @@ class GuildApplications:
             self.in_flight.discard(member_id)
         await it.edit_original_response(content=result)
 
+    async def signup(self, it, uid):
+        logs = it.guild.get_channel(self.log_id)
+        if not logs:
+            raise LookupProblem('등업 로그 채널을 찾을 수 없습니다. 운영진에게 확인해 주세요.')
+        perms = logs.permissions_for(it.guild.me)
+        if not (perms.view_channel and perms.read_message_history):
+            raise LookupProblem('봇에 등업 로그 읽기 권한이 없습니다. 운영진에게 알려 주세요.')
+        try:
+            return await asyncio.wait_for(latest_profile(logs, self.bot.user.id, uid), timeout=90)
+        except (discord.HTTPException, asyncio.TimeoutError) as exc:
+            raise LookupProblem('등업 기록을 지금 읽을 수 없습니다. 잠시 뒤 다시 확인해 주세요.') from exc
+
+    async def character_info(self, it, uid, *, invite=False):
+        view = None
+        try:
+            data = await self.signup(it, uid)
+            if not data:
+                result = ('등업 기록이 없습니다. 신청자에게 전체 이름과 진영을 개별 확인한 뒤 초대해 주세요.'
+                          if invite else '내 계정의 등업 기록이 없습니다. 등업 신청 또는 운영진 확인이 필요합니다.')
+            else:
+                faction, name = data
+                result = registered(data)
+                try:
+                    result += '\n' + summary(await self.api.lookup(name), faction)
+                    if not invite:
+                        view = EquipmentView(uid, name, self.api)
+                except LookupProblem as exc:
+                    result += f'\nAPI 조회: {exc}'
+                if invite:
+                    result += '\n신청자에게 전체 이름과 진영을 개별 확인한 뒤 게임 안에서 직접 초대해 주세요.'
+        except LookupProblem as exc:
+            result = str(exc)
+            if invite:
+                result += ' 신청자에게 전체 이름과 진영을 개별 확인해 주세요.'
+        await it.edit_original_response(content=result, view=view, allowed_mentions=discord.AllowedMentions.none())
+
+    async def mine(self, it):
+        if it.guild_id != self.guild_id:
+            return await it.response.send_message('이 서버에서만 사용할 수 있습니다.', ephemeral=True)
+        await it.response.defer(ephemeral=True, thinking=True)
+        await self.character_info(it, it.user.id)
+
     async def details(self, it):
         if not self.right_place(it) or self.role_id not in [r.id for r in it.user.roles]:
             return await it.response.send_message('스트리머 역할만 초대 정보를 확인할 수 있습니다.', ephemeral=True)
-        await it.response.defer(ephemeral=True, thinking=True)
         uid = applicant(it.message, self.bot.user.id)
-        logs = it.guild.get_channel(self.log_id)
-        try:
-            if uid is None or not logs:
-                result = '신청 정보 또는 등업 로그 채널을 찾을 수 없습니다. 운영진에게 확인해 주세요.'
-            elif not logs.permissions_for(it.guild.me).read_message_history:
-                result = '봇에 등업 로그 읽기 권한이 없습니다. 운영진에게 알려 주세요.'
-            else:
-                data = await asyncio.wait_for(latest_profile(logs, self.bot.user.id, uid), timeout=90)
-                if data:
-                    faction, name = map(discord.utils.escape_markdown, data)
-                    result = f'신청자: <@{uid}>\n진영: {faction}\n캐릭터명: {name}\n게임 안에서 이 캐릭터를 길드로 초대해 주세요.'
-                else:
-                    result = f'<@{uid}>님의 등업 기록이 없습니다. 신청자에게 개별 확인 후 초대해 주세요.'
-        except (discord.HTTPException, asyncio.TimeoutError):
-            logger.exception('등업 로그 조회 실패')
-            result = '등업 기록을 지금 읽을 수 없습니다. 잠시 뒤 다시 확인하거나 운영진에게 문의해 주세요.'
-        await it.edit_original_response(content=result, allowed_mentions=discord.AllowedMentions.none())
+        if uid is None:
+            return await it.response.send_message('신청 정보를 확인할 수 없습니다.', ephemeral=True)
+        await it.response.defer(ephemeral=True, thinking=True)
+        await self.character_info(it, uid, invite=True)
 
 
 def install(bot, guild_id, log_id, role_id):
@@ -162,3 +194,8 @@ def install(bot, guild_id, log_id, role_id):
     bot.add_view(ApplyView(feature))
     bot.add_view(DetailsView(feature))
     bot.add_listener(feature.ensure_panel, 'on_ready')
+
+    @bot.tree.command(name='내캐릭터', description='내 등업 기록에 등록한 한국 포에버 캐릭터와 장비를 나만 봅니다.')
+    @app_commands.guild_only()
+    async def my_character(interaction: discord.Interaction):
+        await feature.mine(interaction)

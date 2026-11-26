@@ -3,24 +3,23 @@ import random
 import string
 import time
 import threading
-from flask import Flask
 import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ui import Modal, TextInput, View, Button
 
 # ================= [Render 웹 포트 열기 (24시간 유지용)] =================
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is alive!"
-
 def run_web():
+    from flask import Flask
+    app = Flask(__name__)
+
+    @app.route('/')
+    def home():
+        return "Bot is alive!"
+
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-threading.Thread(target=run_web, daemon=True).start()
 # =========================================================================
 
 # ================= [내 서버 정보 설정] =================
@@ -224,6 +223,8 @@ class MyBot(commands.Bot):
     async def setup_hook(self):
         from guild_applications import install as install_guild_applications
         install_guild_applications(self, GUILD_ID, LOG_CHANNEL_ID, STREAMER_ROLE_ID)
+        from market_board import install as install_market_board
+        install_market_board(self, GUILD_ID)
 
         # 기존 등업 및 스트리머 인증 버튼 등록
         self.add_view(VerifyView())
@@ -278,7 +279,7 @@ async def on_ready():
         has_panel = any(msg.author == bot.user and msg.components for msg in history)
         if not has_panel:
             embed = discord.Embed(
-                title="디스코드 등업 안내",
+                title="디코지기 봇 | 등업 안내",
                 description="아래 버튼을 눌러 **진영**과 **인게임 캐릭터명**을 입력해 주세요.\n제출 즉시 등업 처리가 진행됩니다.",
                 color=discord.Color.blue()
             )
@@ -286,4 +287,6 @@ async def on_ready():
 
 from youtube_alerts import install as install_youtube_alerts
 install_youtube_alerts(bot)
-bot.run(TOKEN)
+if __name__ == '__main__':
+    threading.Thread(target=run_web, daemon=True).start()
+    bot.run(TOKEN)

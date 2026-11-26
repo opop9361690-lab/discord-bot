@@ -14,8 +14,7 @@ CHANNEL_ID = 1572975822489526343  # 겜코 와우포에버 / ┆길드가입신�
 APPLY = 'wowguild:apply:v1'
 DETAILS = 'wowguild:details:v1'
 COOLDOWN = timedelta(minutes=15)
-PANEL = ('**와우 길드 가입 신청**\n버튼을 누르면 이 채널에 신청이 새 메시지로 남습니다. '
-         '스트리머에게 별도 알림은 보내지 않습니다.\n'
+PANEL = ('**와우 길드 가입 신청**\n버튼을 누르면 이 채널에 신청이 새 메시지로 남습니다.\n'
          '스트리머가 등업 때 입력한 진영과 캐릭터명을 확인한 뒤 게임 안에서 초대합니다.')
 logger = logging.getLogger(__name__)
 

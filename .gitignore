@@ -1,0 +1,9 @@
+# Local-only tokens, historical observations and runtime state
+.env
+.env.*
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.youtube-alerts-state.json

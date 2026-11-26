@@ -124,6 +124,10 @@ class Markets(unittest.IsolatedAsyncioTestCase):
         self.api.ts += 3600
         await self.s.refresh()
         self.assertEqual((await self.s.board())['top'][0]['horde']['units'],1)
+        with patch.object(self.api,'validate',side_effect=m.MappingError('경매장 식별 실패')):
+            await self.s.refresh()
+            self.assertEqual((await self.s.board())['status'],'unavailable')
+            self.assertEqual((await self.s.board())['top'],[])
 
     async def test_one_failed_house_does_not_publish_unilateral_board(self):
         self.api.fail = 'horde'

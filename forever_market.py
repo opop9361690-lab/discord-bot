@@ -48,6 +48,10 @@ class MarketError(ValueError):
     """Safe (non-secret) board diagnostic."""
 
 
+class MappingError(MarketError):
+    """Identity conflict: suppress even recently cached rows until revalidated."""
+
+
 def pos(value):
     if type(value) is not int or not 0 < value < 2**63:
         raise MarketError('숫자 설정 또는 원본 형식 오류')
@@ -99,7 +103,7 @@ class Blizzard:
     def validate(self, houses):
         rules, _ = self.get('/data/wow/ruleset/1')
         if rules.get('id') != 1 or label(rules) != 'PvP':
-            raise MarketError('한국 전쟁 규칙 확인 실패')
+            raise MappingError('한국 전쟁 규칙 확인 실패')
         try:
             index, _ = self.get(ROOT)
         except urllib.error.HTTPError as exc:
@@ -108,13 +112,13 @@ class Blizzard:
             index, _ = self.get(ROOT+'index')
         for faction, house in houses.items():
             if [label(x) for x in index['auctions'] if x.get('id') == house] != [LABEL[faction]]:
-                raise MarketError('설정한 경매장 ID와 블리자드 진영이 일치하지 않습니다')
+                raise MappingError('설정한 경매장 ID와 블리자드 진영이 일치하지 않습니다')
 
     def snapshot(self, faction, house, now):
         route = ROOT+str(house)
         reg, rh = self.get(route)
         if reg.get('id') != house or label(reg) != LABEL[faction]:
-            raise MarketError('경매장 응답 식별 불일치')
+            raise MappingError('경매장 응답 식별 불일치')
         com, ch = self.get(route+'/commodities')
         stamps = [int(parsedate_to_datetime(h['Last-Modified']).timestamp()) for h in (rh,ch)]
         if abs(stamps[0]-stamps[1]) > 120 or min(stamps) < now-GAP or max(stamps) > now+120:
@@ -206,6 +210,7 @@ class MarketService:
         self.raid = frozenset(RAID if raid_ids is None else raid_ids)
         self.config_error = ''
         self.errors = {}
+        self.blocked = set()
         self.lock = asyncio.Lock()
 
     @classmethod
@@ -241,6 +246,8 @@ class MarketService:
                 raise MarketError(self.config_error)
             self.api.validate(self.houses)
         except Exception as exc:
+            if isinstance(exc,MappingError):
+                self.blocked.update(F)
             self.errors = {f:diagnostic(exc) for f in F}
             return dict(self.errors)
         result = {}
@@ -256,11 +263,15 @@ class MarketService:
                         # Zero = community-mapped default plus live faction label; a
                         # nonzero witness = independently observed in-game auctionID.
                         if (h != PVP[f] or witness) and (0,witness) not in rows:
-                            raise MarketError('한국 전쟁 대도시의 일반 매물 auctionID로 경매장 최초 확인 필요')
+                            raise MappingError('한국 전쟁 대도시의 일반 매물 auctionID로 경매장 최초 확인 필요')
                         db.execute('INSERT OR REPLACE INTO proof VALUES (?,?,?)',(h,f,witness or 0))
                     result[f] = record(db,h,ts,rows)
+                del rows
                 self.errors.pop(f,None)
+                self.blocked.discard(f)
             except Exception as exc:
+                if isinstance(exc,MappingError):
+                    self.blocked.add(f)
                 self.errors[f] = result[f] = diagnostic(exc)
                 LOG.warning('Forever market %s: %s',f,result[f])
         # Only resolve items actually selected; cache 404s briefly and keep previous
@@ -303,7 +314,9 @@ class MarketService:
                 db.execute('BEGIN')
                 for f in factions:
                     h = self.houses[f]
-                    last = db.execute('SELECT ts FROM head JOIN proof USING(house) WHERE house=? AND faction=?',(h,f)).fetchone()
+                    if f in self.blocked:
+                        continue
+                    last = db.execute('SELECT ts FROM head JOIN proof USING(house) WHERE house=? AND faction=? AND (? IS NULL OR witness=?)',(h,f,self.witnesses.get(f),self.witnesses.get(f))).fetchone()
                     if last:
                         houses[f]['as_of'] = last[0]
                 times = [s['as_of'] for s in houses.values() if s['as_of'] is not None]
@@ -320,7 +333,7 @@ class MarketService:
                     s['status'] = 'stale' if now-s['as_of']>GAP else ('ready' if seconds>=DAY-120 else 'partial')
                 statuses = [s['status'] for s in houses.values()]
                 out['status'] = next((st for st in ('unavailable','stale','partial') if st in statuses),'ready')
-                out['as_of'] = min(times) if times else None
+                out['as_of'] = max(times) if times else None
                 out['coverage_hours'] = min(s['coverage_hours'] for s in houses.values())
                 messages = dict(self.errors)
                 reasons = list(dict.fromkeys(messages[f] for f in factions if f in messages))

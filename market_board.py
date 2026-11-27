@@ -1,5 +1,6 @@
 """Single-message KR PvP market board. No Discord or backend work unless enabled."""
 import asyncio
+import io
 import logging
 import os
 import re
@@ -44,14 +45,11 @@ def faction_value(cell, house):
     qty = '관측 부족'
     if type(units) is int and units >= 0 and (state == 'ready' or units > 0):
         qty = f'{units:,}개' + (' (부분 관측)' if state == 'partial' else '')
-    return f"개당 최저 {money(cell.get('min_unit_copper'))}\n24시간 추정 {qty}"
+    return f"{money(cell.get('min_unit_copper'))} / {qty}"
 
 
 def render(board):
-    """Each non-inline item heading starts a fresh pair of inline faction columns.
-
-    Discord wraps inline fields on narrow clients; each retains its faction label.
-    """
+    """Text alternative in fixed faction order, including on narrow clients."""
     houses = board.get('houses') or {}
     lines = [f"상태: {STATUS.get(board.get('status'), '자료 없음')}",
              f"자료 기준: {stamp(board.get('as_of'))}"]
@@ -67,17 +65,59 @@ def render(board):
         fields = []
         for rank, row in enumerate((board.get(key) or [])[:5], 1):
             item = clean(row.get('name'), 64) or f"아이템 #{int(row['item_id'])}"
-            fields.append({'name': f'{rank}. {item}', 'value': '\u200b', 'inline': False})
-            for side, label in FACTIONS:
-                fields.append({'name': label, 'inline': True,
-                               'value': faction_value(row.get(side) or {}, houses.get(side) or {})})
+            values = [faction_value(row.get(side) or {}, houses.get(side) or {})
+                      for side, _ in FACTIONS]
+            fields.append({'name': f'{rank}. {item}', 'value': '\n'.join(values), 'inline': False})
         section = {'title': f'{title} TOP 5', 'color': 0x365B79}
         if fields:
+            section['description'] = '첫째 줄 얼라이언스 · 둘째 줄 호드\n개당 최저가 / 24시간 추정 판매수량'
             section['fields'] = fields
         else:
             section['description'] = '순위를 표시할 관측 자료가 없습니다.'
         embeds.append(section)
     return embeds
+
+
+FILENAME = 'kr-pvp-market.png'
+
+
+def load_icon_reader():
+    from market_item_icons import item_icons
+    return item_icons
+
+
+def draw(board, icons):
+    from market_table_image import render_table
+    return render_table(board, icons)
+
+
+async def board_image(service, board):
+    icons = {}
+    if service is not None and (board.get('raid') or board.get('top')):
+        try:
+            item_icons = await asyncio.to_thread(load_icon_reader)
+            icons = await item_icons(service, board)
+        except Exception as exc:
+            LOG.warning('market icons unavailable (%s)', type(exc).__name__)
+    try:
+        return await asyncio.to_thread(draw, board, icons or {})
+    except Exception as exc:
+        LOG.warning('market image unavailable (%s)', type(exc).__name__)
+        return None
+
+
+def image_payload(embeds):
+    """Keep exact values accessible even if the transcript exceeds Discord's alt limit."""
+    lines = []
+    for section in embeds[1:]:
+        lines.extend([section['title'], section['description']])
+        for row in section.get('fields', []):
+            lines.extend([row['name'], row['value']])
+    alt = '\n'.join(lines)
+    overview = dict(embeds[0], image={'url': 'attachment://' + FILENAME})
+    if len(alt.encode('utf-16-le')) <= 2 * 1024:
+        return [overview], alt
+    return [overview, *embeds[1:]], '진영별 시세 비교표. 전체 품목명, 개당 최저가, 24시간 추정 판매수량은 아래 텍스트 표에 있습니다.'
 
 
 def owns(message, bot_id):
@@ -105,7 +145,7 @@ class Publisher:
             raise PermissionError('missing board permissions')
         return ch
 
-    async def publish(self, ch, data):
+    async def publish(self, ch, data, service=None):
         import discord
         async with self.lock:
             bot_id = self.bot.user.id
@@ -125,14 +165,35 @@ class Publisher:
                     if owns(candidate, bot_id):
                         msg = candidate
                         break
-            opts = dict(embeds=[discord.Embed.from_dict(d) for d in render(data)],
-                        allowed_mentions=discord.AllowedMentions.none())
-            if msg is None:
-                # discord.py sets enforce_nonce on keyed sends. Also guards short
-                # overlaps between workers and HTTP retries with a lost response.
-                msg = await ch.send(MARKER, silent=True, nonce=str(self.channel_id), **opts)
+            text = render(data)
+            png = None
+            if getattr(ch.permissions_for(ch.guild.me), 'attach_files', False):
+                png = await board_image(service, data)
+
+            async def update(embeds, file=None):
+                opts = dict(embeds=[discord.Embed.from_dict(d) for d in embeds],
+                            allowed_mentions=discord.AllowedMentions.none())
+                if msg is None:
+                    if file is not None:
+                        opts['file'] = file
+                    return await ch.send(MARKER, silent=True, nonce=str(self.channel_id), **opts)
+                # Explicit replacement, including [] when transitioning to text.
+                await msg.edit(attachments=[file] if file is not None else [], **opts)
+                return msg
+
+            if png:
+                embeds, alt = image_payload(text)
+                file = discord.File(io.BytesIO(png), filename=FILENAME, description=alt)
+                try:
+                    msg = await update(embeds, file)
+                except discord.Forbidden as exc:
+                    if exc.code != 50013:  # Retry only a definitive missing-permission response.
+                        raise
+                    msg = await update(text)
+                finally:
+                    file.close()
             else:
-                await msg.edit(**opts)
+                msg = await update(text)
             self.message_id = msg.id  # A failed pin must not create another post.
             if not msg.pinned:
                 await msg.pin(reason='경매장 시세판 고정')
@@ -152,7 +213,7 @@ async def run(bot, guild_id, channel_id):
             ch = await pub.channel()
             try:
                 if market is None:
-                    market = make_service()
+                    market = await asyncio.to_thread(make_service)
                 failed = False
                 try:
                     await market.refresh()
@@ -165,7 +226,7 @@ async def run(bot, guild_id, channel_id):
             except Exception as exc:
                 LOG.warning('market data unavailable (%s)', type(exc).__name__)
                 board = {'status': 'unavailable', 'note': '수집 상태를 확인할 수 없습니다.'}
-            await pub.publish(ch, board)
+            await pub.publish(ch, board, market)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

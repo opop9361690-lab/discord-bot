@@ -98,6 +98,15 @@ class Tests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.calls), count)
             self.assertLessEqual(state.cache[2][0] - time.monotonic(), m.MISS_TTL)
 
+    async def test_unseen_rows_before_expired_misses(self):
+        self.on_cdn = lambda: Reply(b'bad image')
+        await m.item_icons(self.service, board(1))
+        self.service._market_item_icon_state.cache[1] = (0, None)
+        self.calls.clear()
+        await m.item_icons(self.service, board(1, 2))
+        paths = [urlsplit(r.full_url).path for r in self.calls if 'api.blizzard' in r.full_url]
+        self.assertEqual(paths, ['/data/wow/media/item/2', '/data/wow/media/item/1'])
+
     async def test_deadline_returns_partial_without_starting_another_worker(self):
         release, entered = threading.Event(), threading.Event()
         def work(_api, item, _urls, _deadline):

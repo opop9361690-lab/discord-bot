@@ -153,9 +153,12 @@ async def item_icons(service, board) -> dict[int, bytes]:
     if state is None:
         service._market_item_icon_state = state = _State(source)
     deadline = time.monotonic() + BUDGET
+    # Try never-attempted rows before retrying expired entries. Slow/unavailable
+    # items near the top must not consume every hourly board's time budget.
+    order = sorted(ids, key=state.cache.__contains__)
     state.prune()
     while time.monotonic() < deadline:
-        missing = [i for i in ids if i not in state.cache]
+        missing = [i for i in order if i not in state.cache]
         if not missing:
             break
         if state.pending is None or state.pending.done():

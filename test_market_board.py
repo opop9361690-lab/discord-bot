@@ -2,6 +2,7 @@
 import asyncio
 import os
 import sys
+import threading
 import unittest
 from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,16 +29,30 @@ class DisplayTest(unittest.TestCase):
         self.assertIn('전체', top['title'])
         for group in (raid, top):
             fields = group['fields']
-            self.assertEqual(len(fields), 15)
-            for i in range(0, 15, 3):
-                heading, a, h = fields[i:i+3]
-                self.assertFalse(heading['inline'])
-                self.assertTrue(a['inline'] and h['inline'])
-                self.assertEqual([a['name'], h['name']], ['얼라이언스', '호드'])
-                self.assertIn('1골 2실 3코', a['value'])
-                self.assertIn('20개', a['value'])
-                self.assertIn('관측 부족', h['value'])
-                self.assertNotIn('0개', h['value'])
+            self.assertEqual(len(fields), 5)
+            for label in ('얼라이언스', '호드'):
+                self.assertEqual(str(group).count(label), 1)
+            self.assertIn('개당 최저가 / 일일 판매량 추정치', group['description'])
+            for rank, field in enumerate(fields, 1):
+                self.assertFalse(field['inline'])
+                self.assertTrue(field['name'].startswith(f'{rank}. '))
+                h, a = field['value'].splitlines()
+                self.assertIn('1골 2실 3코 / 20개', a)
+                self.assertIn('관측 부족', h)
+                self.assertNotIn('0개', h)
+
+    def test_accessible_transcript_and_long_alt_fallback(self):
+        board = sample()
+        embeds, alt = m.image_payload(m.render(board))
+        self.assertEqual(len(embeds), 1)
+        self.assertIn('attachment://' + m.FILENAME, embeds[0]['image']['url'])
+        self.assertIn('1골 2실 3코 / 20개', alt)
+        self.assertIn('둘째 줄 얼라이언스', alt)
+        board['raid'][0]['name'] = '🍀' * 64
+        embeds, alt = m.image_payload(m.render(board))
+        self.assertLessEqual(len(alt.encode('utf-16-le')), 2048)
+        self.assertEqual(len(embeds), 3)
+        self.assertIn('1골 2실 3코 / 20개', embeds[-1]['fields'][-1]['value'])
 
     def test_stale_unavailable_and_partial_do_not_become_zero(self):
         cell = {'units': 0, 'min_unit_copper': 12345}
@@ -55,13 +70,25 @@ class NotFound(Exception):
         self.code = code
 
 
+class Forbidden(Exception):
+    code = 50013
+
+
+class File:
+    def __init__(self, fp, *, filename, description):
+        self.fp, self.filename, self.description = fp, filename, description
+
+    def close(self):
+        self.fp.close()
+
+
 class Channel:
     pass
 
 
 class PublisherTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.discord = NS(NotFound=NotFound, Embed=NS(from_dict=lambda d: d),
+        self.discord = NS(NotFound=NotFound, Forbidden=Forbidden, File=File, Embed=NS(from_dict=lambda d: d),
                           AllowedMentions=NS(none=lambda: 'none'), TextChannel=Channel,
                           ChannelType=NS(text='text'))
         p = patch.dict(sys.modules, discord=self.discord)
@@ -72,7 +99,7 @@ class PublisherTest(unittest.IsolatedAsyncioTestCase):
         self.pub = m.Publisher(self.bot, 12, 13)
         ch.id, ch.name, ch.type, ch.guild = 13, '┆경매장시세', 'text', NS(id=12, me=object())
         self.perm = NS(view_channel=True, read_message_history=True, send_messages=True,
-                       manage_messages=True, embed_links=True, pin_messages=True)
+                       manage_messages=True, embed_links=True, pin_messages=True, attach_files=False)
         ch.permissions_for = MagicMock(return_value=self.perm)
         self.messages = []
 
@@ -107,6 +134,89 @@ class PublisherTest(unittest.IsolatedAsyncioTestCase):
         msg.pin.assert_awaited_once()
         self.assertEqual(msg.edit.await_count, 2)
         self.assertEqual(msg.edit.await_args.kwargs['allowed_mentions'], 'none')
+
+    async def test_attach_replace_restart_and_fallback_on_same_post(self):
+        self.perm.attach_files = True
+        service, board = object(), sample()
+        ids = {1: b'icon'}
+        reader = AsyncMock(return_value=ids)
+        thread = threading.get_ident()
+
+        def render_table(b, icons):
+            self.assertNotEqual(thread, threading.get_ident())
+            self.assertIs(b, board)
+            self.assertEqual(icons, ids)
+            return b'png'
+
+        with patch.dict(sys.modules, market_item_icons=NS(item_icons=reader),
+                        market_table_image=NS(render_table=render_table)):
+            await self.pub.publish(self.ch, board, service)
+            msg, = self.messages
+            first = self.ch.send.await_args.kwargs['file']
+            self.assertIn('20개', first.description)
+            msg.attachments = [NS(id=10, filename=m.FILENAME)]
+            worker = m.Publisher(self.bot, 12, 13)
+            await worker.publish(self.ch, board, service)
+            opts = msg.edit.await_args.kwargs
+            second, = opts['attachments']
+            self.assertIsNot(second, first)
+            self.assertEqual(opts['embeds'][0]['image']['url'], 'attachment://' + second.filename)
+            reader.assert_awaited_with(service, board)
+            self.assertEqual(reader.await_count, 2)
+            self.perm.attach_files = False
+            self.assertIs(await worker.channel(), self.ch)
+            await worker.publish(self.ch, board, service)
+            self.assertEqual(reader.await_count, 2)
+            opts = msg.edit.await_args.kwargs
+            self.assertEqual(opts['attachments'], [])
+            self.assertNotIn('image', opts['embeds'][0])
+            self.assertIn('20개', opts['embeds'][1]['fields'][0]['value'])
+            self.ch.send.assert_awaited_once()
+            msg.pin.assert_awaited_once()
+
+    async def test_cold_start_without_rows_and_optional_renderer_failure(self):
+        self.perm.attach_files = True
+        service = object()
+        reader = AsyncMock(side_effect=ValueError())
+        renderer = MagicMock(side_effect=[None, RuntimeError(), b'png'])
+        with patch.dict(sys.modules, market_item_icons=NS(item_icons=reader),
+                        market_table_image=NS(render_table=renderer)):
+            await self.pub.publish(self.ch, {}, service)
+            reader.assert_not_awaited()
+            self.assertNotIn('file', self.ch.send.await_args.kwargs)
+            msg, = self.messages
+            board = sample()
+            await self.pub.publish(self.ch, board, service)
+            renderer.assert_called_with(board, {})
+            self.assertEqual(msg.edit.await_args.kwargs['attachments'], [])
+            await self.pub.publish(self.ch, board, service)
+            attachment, = msg.edit.await_args.kwargs['attachments']
+            self.assertIn('20개', attachment.description)
+            self.ch.send.assert_awaited_once()
+
+    async def test_permission_change_during_upload_retries_only_definitive_denial(self):
+        self.perm.attach_files = True
+        normal = self.ch.send.side_effect
+
+        async def maybe_send(content, **opts):
+            if 'file' in opts:
+                raise Forbidden()
+            return await normal(content, **opts)
+
+        self.ch.send.side_effect = maybe_send
+        with patch.object(m, 'board_image', new_callable=AsyncMock, return_value=b'png'):
+            await self.pub.publish(self.ch, sample())
+            msg, = self.messages
+            self.assertTrue(msg.pinned)
+            self.assertNotIn('file', self.ch.send.await_args.kwargs)
+            msg.edit.side_effect = [Forbidden(), None]
+            await self.pub.publish(self.ch, sample())
+            self.assertEqual(msg.edit.await_args.kwargs['attachments'], [])
+            msg.edit.side_effect = TimeoutError()
+            with self.assertRaises(TimeoutError):
+                await self.pub.publish(self.ch, sample())
+            self.assertEqual(msg.edit.await_count, 3)
+            self.assertEqual(len(self.messages), 1)
 
     async def test_lost_send_response_and_pin_failure_recover_without_posts(self):
         normal_send = self.ch.send.side_effect

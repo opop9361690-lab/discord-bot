@@ -13,7 +13,7 @@ PRICE_WIDTH = CUTS[2] - CUTS[1] - 32
 PAPER, PANEL, ALT = '#101923', '#17232f', '#1b2936'
 INK, MUTED, RULE = '#f4f5f1', '#b9c8d5', '#354453'
 ACCENT = '#e8c47e'
-SIDES = ('alliance', 'horde')
+SIDES = ('horde', 'alliance')
 SECTIONS = (('raid', '레이드 준비물'), ('top', '전체 품목'))
 KST = timezone(timedelta(hours=9))
 
@@ -70,9 +70,9 @@ def _cell(cell, state):
         return None, '오래된 자료' if state == 'stale' else '자료 없음', ''
     price, qty = cell.get('min_unit_copper'), cell.get('units')
     if type(qty) is int and qty >= 0 and (state == 'ready' or qty > 0):
-        quantity = f'24h {qty:,}개' + (' · 부분' if state == 'partial' else '')
+        quantity = f'{qty:,}개' + (' · 부분' if state == 'partial' else '')
     else:
-        quantity = '24h 관측 부족'
+        quantity = '관측 부족'
     if type(price) is not int or price <= 0:
         return None, '매물 미확인', quantity
     g, rem = divmod(price, 10000)
@@ -181,7 +181,7 @@ def render_table(board, icons, font_path=None) -> bytes | None:
     d.rectangle((0, 0, 7, 90), fill=ACCENT)
     _write(d, 22, 25, 'KR  /  PVP', font(19, True), ACCENT)
     _write(d, 20, 62, '경매장 시세판', font(38, True))
-    _write(d, 388, 31, '개당 최저가  /  24시간 추정 판매수량', font(26, True))
+    _write(d, 388, 31, '개당 최저가  /  일일 판매량 추정치', font(26, True))
     ts = board.get('as_of')
     if type(ts) is int:
         try:
@@ -190,8 +190,8 @@ def render_table(board, icons, font_path=None) -> bytes | None:
             stamp = None
         if stamp:
             _write(d, 390, 68, '자료 기준   ' + stamp, font(22), MUTED)
-    for col, (label, bg, fg) in enumerate((('아이템','#2a3948',INK), ('얼라이언스','#203c57','#b7daff'),
-                                            ('호드','#493038','#ffc7b8'))):
+    for col, (label, bg, fg) in enumerate((('아이템','#2a3948',INK), ('호드','#493038','#ffc7b8'),
+                                            ('얼라이언스','#203c57','#b7daff'))):
         x = CUTS[col]
         d.rectangle((x,92,CUTS[col+1]-1,top-1), fill=bg)
         _write(d, x+16, 117, label, font(29, True), fg)
@@ -234,7 +234,7 @@ def render_table(board, icons, font_path=None) -> bytes | None:
                         _write(d, ox, line_y-2, text, font(24), MUTED)
                         line_y += 30
             y += rh
-    _write(d, 16, y+27, '양 진영 합산 수량 순위  ·  추정치는 실제 거래량과 다를 수 있습니다.', font(22), MUTED)
+    _write(d, 16, y+27, '최근 24시간 기준 · 판매량은 시간별 매물 변화를 바탕으로 한 추정치입니다.', font(22), MUTED)
     out = BytesIO()
     im.save(out, 'PNG')
     return out.getvalue()

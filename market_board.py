@@ -13,7 +13,7 @@ CHANNEL_NAME = '경매장시세'
 DEFAULT_GUILD = 1462029945034375181
 # Stable ownership marker, independent of display data and software version.
 MARKER = 'KR PvP 경매장 시세판'
-FACTIONS = (('alliance', '얼라이언스'), ('horde', '호드'))
+FACTIONS = (('horde', '호드'), ('alliance', '얼라이언스'))
 STATUS = {'ready': '정상', 'partial': '관측 부족', 'stale': '오래된 자료',
           'unavailable': '자료 없음'}
 
@@ -57,7 +57,7 @@ def render(board):
         house = houses.get(key) or {}
         state = STATUS.get(house.get('status'), '자료 없음')
         lines.append(f"{label}: {stamp(house.get('as_of'))} · {state}")
-    lines += ['24시간 추정 판매수량 순위 (양 진영 합산). 실거래 확정 수량이 아닙니다.',
+    lines += ['일일 판매량 추정치 순위 (최근 24시간, 양 진영 합산). 실거래 확정 수량이 아닙니다.',
               clean(board.get('note'), 320)]
     embeds = [{'title': 'KR PvP 경매장 · 진영별 시세', 'description': '\n'.join(filter(None, lines)),
                'color': 0x365B79}]
@@ -70,7 +70,7 @@ def render(board):
             fields.append({'name': f'{rank}. {item}', 'value': '\n'.join(values), 'inline': False})
         section = {'title': f'{title} TOP 5', 'color': 0x365B79}
         if fields:
-            section['description'] = '첫째 줄 얼라이언스 · 둘째 줄 호드\n개당 최저가 / 24시간 추정 판매수량'
+            section['description'] = '첫째 줄 호드 · 둘째 줄 얼라이언스\n개당 최저가 / 일일 판매량 추정치'
             section['fields'] = fields
         else:
             section['description'] = '순위를 표시할 관측 자료가 없습니다.'
@@ -117,7 +117,7 @@ def image_payload(embeds):
     overview = dict(embeds[0], image={'url': 'attachment://' + FILENAME})
     if len(alt.encode('utf-16-le')) <= 2 * 1024:
         return [overview], alt
-    return [overview, *embeds[1:]], '진영별 시세 비교표. 전체 품목명, 개당 최저가, 24시간 추정 판매수량은 아래 텍스트 표에 있습니다.'
+    return [overview, *embeds[1:]], '진영별 시세 비교표. 전체 품목명, 개당 최저가, 일일 판매량 추정치은 아래 텍스트 표에 있습니다.'
 
 
 def owns(message, bot_id):

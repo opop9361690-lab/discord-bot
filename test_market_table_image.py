@@ -42,15 +42,15 @@ class MarketTableImageTests(unittest.TestCase):
             im.verify()
         texts = [(c.args[1], c.args[2], c.args[3]) for c in write.call_args_list]
         headers = [c for c in texts if c[2] in ('아이템', '얼라이언스', '호드')]
-        self.assertEqual([c[2] for c in headers], ['아이템', '얼라이언스', '호드'])
+        self.assertEqual([c[2] for c in headers], ['아이템', '호드', '얼라이언스'])
         self.assertEqual(len({c[1] for c in headers}), 1)
         self.assertEqual([c[0] for c in headers], sorted(c[0] for c in headers))
         labels = [t for _, _, t in texts]
         self.assertLess(labels.index('레이드 준비물'), labels.index('전체 품목'))
         self.assertNotIn('상급 보호 물약 6', labels)
         self.assertEqual(labels.count('순위 자료 없음'), 4)
-        self.assertEqual(labels.count('24h 0개'), 6)
-        self.assertEqual(labels.count('24h 23개 · 부분'), 6)
+        self.assertEqual(labels.count('0개'), 6)
+        self.assertEqual(labels.count('23개 · 부분'), 6)
 
     def test_pastes_real_pixels_missing_or_corrupt_icon_is_a_placeholder(self):
         data = board([item(1)], [item(1)])
@@ -75,7 +75,7 @@ class MarketTableImageTests(unittest.TestCase):
         with patch.object(table, '_coin', wraps=table._coin) as coin, \
                 patch.object(table, '_write', wraps=table._write) as write:
             table.render_table(data, {})
-        self.assertEqual([c.args[3] for c in coin.call_args_list], [0,1,2,2])
+        self.assertEqual([c.args[3] for c in coin.call_args_list], [2,0,1,2])
         self.assertFalse(any('골드' in c.args[3] or '실버' in c.args[3] or '코퍼' in c.args[3]
                              for c in write.call_args_list))
 
@@ -88,15 +88,15 @@ class MarketTableImageTests(unittest.TestCase):
         for bad in (None, 0, -1, True, '100'):
             self.assertEqual(table._cell({'min_unit_copper': bad}, 'ready')[:2],
                              (None, '매물 미확인'))
-        self.assertEqual(table._cell({'units': 0}, 'partial')[2], '24h 관측 부족')
-        self.assertEqual(table._cell({'units': 0}, 'ready')[2], '24h 0개')
+        self.assertEqual(table._cell({'units': 0}, 'partial')[2], '관측 부족')
+        self.assertEqual(table._cell({'units': 0}, 'ready')[2], '0개')
         for bad in (None, -1, True, '9'):
-            self.assertEqual(table._cell({'units': bad}, 'ready')[2], '24h 관측 부족')
+            self.assertEqual(table._cell({'units': bad}, 'ready')[2], '관측 부족')
 
     def test_long_korean_and_sqlite_max_are_drawn_in_column_without_data_loss(self):
         row = item(3)
         row['name'] = '최상급치유의물약' * 15
-        row['alliance'] = {'min_unit_copper': 2**63-1, 'units': 2**63-1}
+        row['horde'] = {'min_unit_copper': 2**63-1, 'units': 2**63-1}
         with patch.object(table, '_write', wraps=table._write) as write, \
                 patch.object(table, '_coin', wraps=table._coin) as coins:
             png = table.render_table(board([row], []), {})
@@ -114,7 +114,7 @@ class MarketTableImageTests(unittest.TestCase):
             if text and set(text) <= set(row['name']):
                 seen_names.append(text)
                 self.assertLess(right, table.CUTS[1])
-            if x == table.CUTS[1]+16 and text not in ('얼라이언스',):
+            if x == table.CUTS[1]+16 and text not in ('호드',):
                 self.assertLess(right, table.CUTS[2])
                 if text == largest_gold:
                     found_gold = True

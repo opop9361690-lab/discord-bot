@@ -32,11 +32,11 @@ class DisplayTest(unittest.TestCase):
             self.assertEqual(len(fields), 5)
             for label in ('얼라이언스', '호드'):
                 self.assertEqual(str(group).count(label), 1)
-            self.assertIn('개당 최저가 / 24시간 추정 판매수량', group['description'])
+            self.assertIn('개당 최저가 / 일일 판매량 추정치', group['description'])
             for rank, field in enumerate(fields, 1):
                 self.assertFalse(field['inline'])
                 self.assertTrue(field['name'].startswith(f'{rank}. '))
-                a, h = field['value'].splitlines()
+                h, a = field['value'].splitlines()
                 self.assertIn('1골 2실 3코 / 20개', a)
                 self.assertIn('관측 부족', h)
                 self.assertNotIn('0개', h)
@@ -47,7 +47,7 @@ class DisplayTest(unittest.TestCase):
         self.assertEqual(len(embeds), 1)
         self.assertIn('attachment://' + m.FILENAME, embeds[0]['image']['url'])
         self.assertIn('1골 2실 3코 / 20개', alt)
-        self.assertIn('둘째 줄 호드', alt)
+        self.assertIn('둘째 줄 얼라이언스', alt)
         board['raid'][0]['name'] = '🍀' * 64
         embeds, alt = m.image_payload(m.render(board))
         self.assertLessEqual(len(alt.encode('utf-16-le')), 2048)
